@@ -30,6 +30,8 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 @dataclass
 class MagicTimePipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
+    predx_0: Union[torch.Tensor, np.ndarray]
+    predx_t: Union[torch.Tensor, np.ndarray]
 
 class MagicTimePipeline(DiffusionPipeline):
     _optional_components = []
@@ -378,6 +380,8 @@ class MagicTimePipeline(DiffusionPipeline):
 
         # Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        predx_t = []
+        predx_0 = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
@@ -401,13 +405,15 @@ class MagicTimePipeline(DiffusionPipeline):
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-
+                predx_t.append(latents.squeeze(0).detach().clone())
+                predx_0.append(self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).pred_original_sample.squeeze(0).detach().clone()) #x_0
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         callback(i, t, latents)
-
+        predx_0 = torch.stack(predx_0, dim=0).detach().cpu()
+        predx_t = torch.stack(predx_t, dim=0).detach().cpu()
         # Post-processing
         video = self.decode_latents(latents)
 
@@ -418,4 +424,4 @@ class MagicTimePipeline(DiffusionPipeline):
         if not return_dict:
             return video
 
-        return MagicTimePipelineOutput(videos=video)
+        return MagicTimePipelineOutput(videos=video,predx_0=predx_0, predx_t=predx_t)
